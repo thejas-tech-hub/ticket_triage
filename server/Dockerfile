@@ -2,7 +2,7 @@
 # Customer Support Ticket Triage — Dockerfile
 # ============================================================
 # Standard Python 3.11 slim image running the FastAPI server
-# via uvicorn on port 8000.
+# via uvicorn on port 7860.
 # ============================================================
 
 FROM python:3.11-slim
@@ -30,11 +30,11 @@ COPY . .
 ENV PYTHONPATH="/app:$PYTHONPATH"
 
 # Expose the default server port
-EXPOSE 8000
+EXPOSE 7860
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health')" || exit 1
 
 # Run the FastAPI server
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860"]

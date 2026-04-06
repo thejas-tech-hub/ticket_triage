@@ -1,142 +1,69 @@
-# ============================================================
-# Customer Support Ticket Triage — HTTP Inference Script
-# ============================================================
-# Demonstrates end-to-end interaction with the FastAPI server
-# using pure HTTP requests (no direct environment imports).
-#
-# Usage:
-#   1. Start the server:  uvicorn server.app:app --port 8000
-#   2. Run inference:     python inference.py
-# ============================================================
-
-import requests
-import json
+import os
 import sys
+import json
+import requests
+from openai import OpenAI
 
-BASE_URL = "http://localhost:8000"
-
-
-def run_task(task_id: str) -> dict:
-    """
-    Run a single triage task against the FastAPI server over HTTP.
-
-    1. POST /reset?task_id=<id>  — load the ticket into the environment
-    2. POST /step                — submit a heuristic triage action and get graded feedback
-
-    Returns the graded observation dict from the /step response.
-    """
-
-    # ── Step 1: Reset the environment ─────────────────────────
-    reset_resp = requests.post(f"{BASE_URL}/reset", params={"task_id": task_id})
-    reset_resp.raise_for_status()
-    observation = reset_resp.json()
-
-    ticket_id = observation.get("ticket_id", "unknown")
-    customer_message = observation.get("customer_message", "")
-    print(f"   Ticket ID : {ticket_id}")
-    print(f"   Message   : {customer_message[:80]}...")
-
-    # ── Step 2: Build a simple heuristic action ───────────────
-    # (In production, an LLM agent would generate this action)
-    action = _heuristic_action(task_id, customer_message)
-
-    # ── Step 3: Submit the action via /step ────────────────────
-    step_resp = requests.post(f"{BASE_URL}/step", json=action)
-    step_resp.raise_for_status()
-    result = step_resp.json()
-
-    reward = result.get("reward", 0.0)
-    feedback = result.get("feedback", "")
-    print(f"   ★ Reward  : {reward}")
-    print(f"   Feedback  : {feedback}")
-
-    return result
-
-
-def _heuristic_action(task_id: str, message: str) -> dict:
-    """
-    Simple keyword-based heuristic to produce a triage action.
-    This shows the agent logic is decoupled from the environment.
-    """
-    message_lower = message.lower()
-
-    if "refund" in message_lower or "return" in message_lower:
-        return {
-            "category": "Refund",
-            "urgency": "Medium",
-            "suggested_reply": (
-                "Thank you for reaching out about your refund request. "
-                "We will process your refund within 3-5 business days."
-            ),
-        }
-    elif "crash" in message_lower or "bug" in message_lower or "error" in message_lower:
-        return {
-            "category": "TechSupport",
-            "urgency": "High",
-            "suggested_reply": (
-                "We're sorry about the technical issue you're experiencing. "
-                "Our engineering team is investigating and will follow up shortly."
-            ),
-        }
-    elif "gdpr" in message_lower or "legal" in message_lower or "lawyer" in message_lower:
-        return {
-            "category": "Legal",
-            "urgency": "Critical",
-            "suggested_reply": (
-                "We take data privacy and legal compliance very seriously. "
-                "Our legal team will review your request and respond within 24 hours."
-            ),
-        }
-    else:
-        return {
-            "category": "Billing",
-            "urgency": "Low",
-            "suggested_reply": (
-                "Thank you for contacting support. "
-                "We'll review your inquiry and get back to you soon."
-            ),
-        }
-
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-3.5-turbo")
+SERVER_URL = "http://localhost:7860"
 
 def main():
-    print("=" * 60)
-    print("  Customer Support Ticket Triage — HTTP Inference")
-    print(f"  Server: {BASE_URL}")
-    print("=" * 60)
-
-    # ── Verify server is running ──────────────────────────────
-    try:
-        health = requests.get(f"{BASE_URL}/health", timeout=5)
-        health.raise_for_status()
-        print(f"  ✓ Server is healthy: {health.json()}\n")
-    except requests.ConnectionError:
-        print("  ✗ ERROR: Cannot connect to server.")
-        print(f"    Start it with: uvicorn server.app:app --port 8000")
+    if not API_KEY:
+        print("ERROR: HF_TOKEN environment variable is not set. Export it first.")
         sys.exit(1)
 
-    # ── Fetch available tasks ─────────────────────────────────
-    tasks_resp = requests.get(f"{BASE_URL}/tasks")
-    tasks_resp.raise_for_status()
-    tasks = tasks_resp.json()
-    print(f"  Found {len(tasks)} tasks\n")
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    session = requests.Session()
+    
+    print("Fetching tasks from environment...")
+    try:
+        tasks = session.get(f"{SERVER_URL}/tasks").json()
+    except Exception as e:
+        print(f"Could not connect to {SERVER_URL}. Is the server running? Error: {e}")
+        sys.exit(1)
 
-    # ── Run each task ─────────────────────────────────────────
     total_score = 0.0
 
     for task in tasks:
         task_id = task["task_id"]
-        difficulty = task.get("difficulty", "?")
-        print(f"── Task: {task_id} ({difficulty}) ──")
+        print(f"\n── Task: {task_id} ──")
 
-        result = run_task(task_id)
+        # 1. Reset
+        obs = session.post(f"{SERVER_URL}/reset", params={"task_id": task_id}).json()
+        
+        # 2. LLM Call using OpenAI Client
+        prompt = f"""You are a Support AI. Classify this ticket.
+Ticket: {obs.get('customer_message')}
+
+Return a JSON object with exactly these keys:
+"category": (Must be "Refund", "TechSupport", "Billing", or "Legal")
+"urgency": (Must be "Low", "Medium", "High", or "Critical")
+"suggested_reply": (A short draft response)"""
+
+        try:
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+            action = json.loads(response.choices[0].message.content)
+        except Exception as e:
+            print(f"LLM Error: {e}")
+            action = {"category": "Billing", "urgency": "Low", "suggested_reply": "Error"}
+
+        # 3. Step
+        payload = {"action": action}
+        if obs.get("session_id"): payload["session_id"] = obs.get("session_id")
+        
+        result = session.post(f"{SERVER_URL}/step", json=payload).json()
+        print(f"Agent Predicted: {action.get('category')} / {action.get('urgency')}")
+        print(f"★ Reward: {result.get('reward')}")
         total_score += float(result.get("reward", 0.0))
-        print()
 
-    # ── Summary ───────────────────────────────────────────────
-    print("=" * 60)
-    print(f"  AGGREGATE SCORE: {total_score:.4f}  ({len(tasks)} tasks)")
-    print("=" * 60)
-
+    print(f"\nAGGREGATE SCORE: {total_score:.4f}")
 
 if __name__ == "__main__":
     main()

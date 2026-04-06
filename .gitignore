@@ -1,0 +1,33 @@
+# ============================================================
+# .gitignore — Customer Support Ticket Triage
+# ============================================================
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+
+# Gemini
+.gemini/

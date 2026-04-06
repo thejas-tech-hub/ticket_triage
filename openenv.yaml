@@ -1,0 +1,13 @@
+# ============================================================
+# OpenEnv Environment Manifest
+# ============================================================
+# Metadata for the Customer Support Ticket Triage environment.
+# Conforms to the OpenEnv spec (spec_version: 1).
+# ============================================================
+
+spec_version: 1
+name: ticket_triage
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
